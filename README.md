@@ -1,78 +1,72 @@
-# چالش فنی شماره 1: موتور پردازش تراکنش‌های پرترافیک (High-Scale Payment Engine)
+# چالش موتور پردازش تراکنش‌های مالی (High-Scale Payment Engine)
 
 ## 📌 سناریوی کسب‌وکار
-در درگاه‌های پرداخت با لود بالا، ثانیه‌ها سرنوشت‌سازند. سامانه‌ای که پیش‌رو دارید مسئولیت پردازش، مانیتورینگ سلامت، کنترل ریسک و ثبت لاگ‌های حسابرسی هزاران تراکنش همزمان را بر عهده دارد.
-
-هدف این است که با درک عمیق از رفتار همروندی (Concurrency) و مدیریت بهینه منابع، کلاس `TransactionEngine` را بر اساس اینترفیس `ITransactionEngine` پیاده‌سازی کنید.
+در سامانه‌های پردازش مالی با بار ترافیکی بالا، مدیریت صحیح پردازش‌های همزمان و بهینه‌سازی مصرف منابع اهمیت ویژه‌ای دارد. هدف این چالش، پیاده‌سازی کلاس `TransactionEngine` بر اساس اینترفیس `ITransactionEngine` است تا نیازمندی‌های زیر با رعایت پایداری و استانداردهای کیفی پوشش داده شوند.
 
 ---
 
-## 🎯 شرح وظایف و نیازمندی‌های سیستم
+## 🎯 شرح متدها و نیازمندی‌ها
 
-### ۱. دیده‌بان سلامت سامانه (`StartHealthWatchdog`)
-* سیستم نیاز به یک ناظر فعال دارد که در بازه‌های زمانی مشخص (`checkInterval`) وضعیت سلامت را بررسی و از طریق `alertLogger` گزارش کند.
-* این پردازش نباید مانع از خاموش شدن عادی برنامه در پایان کار سیستم شود.
-* با صدا زدن متد `Dispose` در کلاس، این مانیتور باید در کسری از ثانیه و بدون معطل کردن پروسس، به شکلی امن و تمیز متوقف شود.
+### ۱. StartHealthWatchdog
+پایشگری را راه‌اندازی می‌کند که در بازه‌های زمانی مشخص (`checkInterval`) وضعیت سلامت سامانه را با `alertLogger` ثبت کند. با فراخوانی متد `Dispose` در کلاس، این پایشگر باید به شکل تمیز خاتمه یابد.
 
----
+### ۲. BatchAndDispatchWithThrottleAsync
+- **تجمیع:** تراکنش‌های ورودی باید به دسته‌هایی تفکیک شوند به‌گونه‌ای که مجموع مبلغ هر دسته حداکثر برابر با `maxBatchAmount` باشد و تعداد دسته‌ها به حداقل برسد. اگر مبلغ هر تراکنش به تنهایی بیشتر از این مقدار باشد، متد باید `ArgumentException` پرتاب کند.
+- **ارسال:** دسته‌های ایجادشده توسط متد `batchGatewayCaller` ارسال می‌شوند. در هر لحظه، حداکثر `maxConcurrentGatewayCalls` بسته اجازه پردازش همزمان دارند. خروجی نهایی، لیست نتایج برگشتی از تمام بسته‌ها است.
 
-### ۲. ارسال دسته‌ای با کنترل سقف همزمانی (`DispatchTransactionsWithThrottleAsync`)
-* درگاه‌های بیرونی ظرفیت محدودی دارند. شما باید لیستی از تراکنش‌ها را به درگاه ارسال کنید، اما در هیچ لحظه‌ای تعداد درخواست‌های همزمان در حال پردازش نباید از `maxConcurrentGatewayCalls` فراتر برود.
-* ترتیب نتایج در خروجی نهایی باید دقیقاً متناظر با ترتیب درخواست‌های ورودی باشد.
-* آزادسازی ظرفیت پردازش باید حتی در صورت بروز استثنا (Exception) در هر تراکنش تضمین شود.
+### ۳. EvaluateRiskRulesAsync
+مجموعه‌ای از قوانین اعتبارسنجی مستقل (`riskRules`) را اجرا کرده و آرایه‌ای از تمام ارزیابی‌های انجام‌شده را برمی‌گرداند.
 
----
+### ۴. GetFastestConfirmationAsync
+وضعیت تراکنش را از چندین نود (`nodes`) استعلام کرده و نتیجه نخستین پاسخی را که با موفقیت تکمیل شد، به عنوان خروجی بازمی‌گرداند. در صورتی که همه نودها با خطا مواجه شوند، متد باید `InvalidOperationException` پرتاب کند.
 
-### ۳. استعلام چندگانه ریسک (`EvaluateRiskRulesAsync`)
-* برای هر تراکنش، چندین ارزیابی امنیتی مستقل (مانند بررسی لیست سیاه، اعتبارسنجی احراز هویت و کشف تقلب) باید انجام شود.
-* تمامی این قواعد باید به شکل غیرهمزمان و در سریع‌ترین زمان ممکن به صورت موازی استعلام شوند و پس از کامل شدن تمام آن‌ها، آرایه‌ای از ارزیابی‌ها برگردانده شود.
+### ۵. EncryptAuditLogsInParallel
+لاگ‌های خام ورودی را با استفاده از تابع `encryptAlgorithm` رمزنگاری می‌کند. این پردازش باید با رعایت سقف همزمانی `maxDegreeOfParallelism` انجام شده و کلیه رکوردهای خروجی بازگردانده شوند.
 
 ---
 
-### ۴. دریافت سریع‌ترین تاییدیه تراکنش (`GetFastestConfirmationAsync`)
-* برای جلوگیری از تاخیر، استعلام وضعیت تراکنش همزمان به چندین نود زیرساخت ارسال می‌شود.
-* به محض دریافت اولین پاسخ معتبر و بدون خطا از هر یک از نودها، نتیجه باید فوراً بازگردانده شود.
-* **نکته کلیدی:** به منظور جلوگیری از هدررفت منابع شبکه و سرور، بلافاصله پس از مشخص شدن اولین پاسخ موفق، اجرای سایر استعلام‌های در حال انجام روی دیگر نودها باید لغو (Cancel) شود.
-* در صورتی که یک نود خطا دهد، نباید کل فرآیند متوقف شود، مگر اینکه همه نودها با خطا مواجه شوند.
+## 🏗 تعاریف مدل‌ها و اینترفیس
 
----
-
-### ۵. پردازش سنگین و موازی لاگ‌های حسابرسی (`EncryptAuditLogsInParallel`)
-* پیش از ذخیره‌سازی، لاگ‌های خام باید رمزنگاری شوند. این عملیات سنگین محاسباتی (CPU-Bound) است.
-* لاگ‌ها باید با توزیع بهینه روی هسته‌های پردازنده و با رعایت سقف پردازش موازی (`maxDegreeOfParallelism`) رمزنگاری شوند.
-* عملیات جمع‌آوری نتایج باید کاملاً Thread-Safe بوده و تداخل حافظه‌ای ایجاد نکند.
-
----
-
-## ⚙️ راهنمای پیاده‌سازی
-
-1. مخزن را کلون کنید.
-2. منطق مورد نظر را در `TransactionEngine.cs` پیاده‌سازی کنید.
-3. کلاس شما باید اینترفیس `ITransactionEngine` را به طور کامل پیاده‌سازی کند:
 ```csharp
+namespace HighScalePaymentEngine;
+
 public interface ITransactionEngine : IDisposable
 {
-void StartHealthWatchdog(
-Action<string> alertLogger, 
-TimeSpan checkInterval);
+    void StartHealthWatchdog(
+        Action<string> alertLogger, 
+        TimeSpan checkInterval);
 
-Task<IReadOnlyList<TransactionResult>> DispatchTransactionsWithThrottleAsync(
-IEnumerable<TransactionRequest> requests,
-Func<TransactionRequest, CancellationToken, Task<TransactionResult>> gatewayCaller,
-int maxConcurrentGatewayCalls,
-CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<BatchResult>> BatchAndDispatchWithThrottleAsync(
+        IEnumerable<TransactionRequest> requests,
+        decimal maxBatchAmount,
+        Func<IReadOnlyList<TransactionRequest>, CancellationToken, Task<BatchResult>> batchGatewayCaller,
+        int maxConcurrentGatewayCalls,
+        CancellationToken cancellationToken = default);
 
-Task<RiskAssessment[]> EvaluateRiskRulesAsync(
-IEnumerable<Func<CancellationToken, Task<RiskAssessment>>> riskRules,
-CancellationToken cancellationToken = default);
+    Task<RiskAssessment[]> EvaluateRiskRulesAsync(
+        IEnumerable<Func<CancellationToken, Task<RiskAssessment>>> riskRules,
+        CancellationToken cancellationToken = default);
 
-Task<TransactionStatus> GetFastestConfirmationAsync(
-IEnumerable<Func<CancellationToken, Task<TransactionStatus>>> nodes,
-CancellationToken cancellationToken = default);
+    Task<TransactionStatus> GetFastestConfirmationAsync(
+        IEnumerable<Func<CancellationToken, Task<TransactionStatus>>> nodes,
+        CancellationToken cancellationToken = default);
 
-IReadOnlyList<EncryptedRecord> EncryptAuditLogsInParallel(
-IEnumerable<RawAuditLog> logs,
-Func<RawAuditLog, EncryptedRecord> encryptAlgorithm,
-int maxDegreeOfParallelism,
-CancellationToken cancellationToken = default);
+    IReadOnlyList<EncryptedRecord> EncryptAuditLogsInParallel(
+        IEnumerable<RawAuditLog> logs,
+        Func<RawAuditLog, EncryptedRecord> encryptAlgorithm,
+        int maxDegreeOfParallelism,
+        CancellationToken cancellationToken = default);
 }
+
+public record TransactionRequest(string Id, decimal Amount);
+public record BatchResult(int BatchIndex, int TotalItems, decimal TotalAmount, bool IsSuccess);
+public record RiskAssessment(string RuleName, bool IsApproved, int RiskScore);
+public record TransactionStatus(string TransactionId, string State);
+public record RawAuditLog(long Id, string Payload);
+public record EncryptedRecord(long Id, string EncryptedPayload, int ProcessedByThreadId);
+```
+
+---
+
+## 🚀 روال اجرا
+کلاس `TransactionEngine` را پیاده‌سازی کرده و پس از اطمینان از کامپایل بدون خطای پروژه، تغییرات خود را در قالب یک Pull Request ارسال کنید.

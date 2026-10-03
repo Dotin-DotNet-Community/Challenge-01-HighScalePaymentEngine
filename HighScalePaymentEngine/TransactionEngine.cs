@@ -9,6 +9,7 @@ public class TransactionEngine : ITransactionEngine
 
     public Task<IReadOnlyList<TransactionResult>> DispatchTransactionsWithThrottleAsync(
         IEnumerable<TransactionRequest> requests,
+        decimal maxBatchAmount,
         Func<TransactionRequest, CancellationToken, Task<TransactionResult>> gatewayCaller,
         int maxConcurrentGatewayCalls,
         CancellationToken cancellationToken = default)
