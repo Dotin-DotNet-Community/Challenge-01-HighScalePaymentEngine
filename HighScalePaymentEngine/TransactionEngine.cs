@@ -2,15 +2,17 @@
 
 public class TransactionEngine : ITransactionEngine
 {
-    public void StartHealthWatchdog(Action<string> alertLogger, TimeSpan checkInterval)
+    public void StartHealthWatchdog(
+        Action<string> alertLogger,
+        TimeSpan checkInterval)
     {
         throw new NotImplementedException();
     }
 
-    public Task<IReadOnlyList<TransactionResult>> DispatchTransactionsWithThrottleAsync(
+    public Task<IReadOnlyList<BatchResult>> BatchAndDispatchWithThrottleAsync(
         IEnumerable<TransactionRequest> requests,
         decimal maxBatchAmount,
-        Func<TransactionRequest, CancellationToken, Task<TransactionResult>> gatewayCaller,
+        Func<IReadOnlyList<TransactionRequest>, CancellationToken, Task<BatchResult>> batchGatewayCaller,
         int maxConcurrentGatewayCalls,
         CancellationToken cancellationToken = default)
     {
@@ -42,6 +44,6 @@ public class TransactionEngine : ITransactionEngine
 
     public void Dispose()
     {
-        GC.SuppressFinalize(this);
+        throw new NotImplementedException();
     }
 }

@@ -1,13 +1,22 @@
 ﻿namespace HighScalePaymentEngine;
 
+public record TransactionRequest(string Id, decimal Amount);
+public record BatchResult(int BatchIndex, int TotalItems, decimal TotalAmount, bool IsSuccess);
+public record RiskAssessment(string RuleName, bool IsApproved, int RiskScore);
+public record TransactionStatus(string TransactionId, string State);
+public record RawAuditLog(long Id, string Payload);
+public record EncryptedRecord(long Id, string EncryptedPayload, int ProcessedByThreadId);
+
 public interface ITransactionEngine : IDisposable
 {
-    void StartHealthWatchdog(Action<string> alertLogger, TimeSpan checkInterval);
+    void StartHealthWatchdog(
+        Action<string> alertLogger,
+        TimeSpan checkInterval);
 
-    Task<IReadOnlyList<TransactionResult>> DispatchTransactionsWithThrottleAsync(
+    Task<IReadOnlyList<BatchResult>> BatchAndDispatchWithThrottleAsync(
         IEnumerable<TransactionRequest> requests,
         decimal maxBatchAmount,
-        Func<TransactionRequest, CancellationToken, Task<TransactionResult>> gatewayCaller,
+        Func<IReadOnlyList<TransactionRequest>, CancellationToken, Task<BatchResult>> batchGatewayCaller,
         int maxConcurrentGatewayCalls,
         CancellationToken cancellationToken = default);
 
@@ -25,10 +34,3 @@ public interface ITransactionEngine : IDisposable
         int maxDegreeOfParallelism,
         CancellationToken cancellationToken = default);
 }
-
-public record TransactionRequest(string Id, decimal Amount);
-public record TransactionResult(string Id, bool IsSuccess, string GatewayResponse);
-public record RiskAssessment(string RuleName, bool IsApproved, int RiskScore);
-public record TransactionStatus(string TransactionId, string State);
-public record RawAuditLog(long Id, string Payload);
-public record EncryptedRecord(long Id, string EncryptedPayload, int ProcessedByThreadId);
