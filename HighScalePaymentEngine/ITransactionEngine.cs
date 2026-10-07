@@ -1,12 +1,5 @@
 ﻿namespace HighScalePaymentEngine;
 
-public record TransactionRequest(string Id, decimal Amount);
-public record BatchResult(int BatchIndex, int TotalItems, decimal TotalAmount, bool IsSuccess);
-public record RiskAssessment(string RuleName, bool IsApproved, int RiskScore);
-public record TransactionStatus(string TransactionId, string State);
-public record RawAuditLog(long Id, string Payload);
-public record EncryptedRecord(long Id, string EncryptedPayload, int ProcessedByThreadId);
-
 public interface ITransactionEngine : IDisposable
 {
     void StartHealthWatchdog(
@@ -34,3 +27,10 @@ public interface ITransactionEngine : IDisposable
         int maxDegreeOfParallelism,
         CancellationToken cancellationToken = default);
 }
+
+public record TransactionRequest(string Id, decimal Amount);
+public record BatchResult(int BatchIndex, int TotalItems, decimal TotalAmount, bool IsSuccess);
+public record RiskAssessment(string RuleName, bool IsApproved, int RiskScore);
+public record TransactionStatus(string TransactionId, string State);
+public record RawAuditLog(long Id, string Payload);
+public record EncryptedRecord(long Id, string EncryptedPayload, int ProcessedByThreadId);
