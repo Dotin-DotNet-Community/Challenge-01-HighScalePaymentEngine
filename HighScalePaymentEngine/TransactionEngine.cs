@@ -1,6 +1,6 @@
 ﻿namespace HighScalePaymentEngine;
 
-public class TransactionEngine : ITransactionEngine
+public sealed class TransactionEngine : ITransactionEngine
 {
     public void StartHealthWatchdog(
         Action<string> alertLogger,
