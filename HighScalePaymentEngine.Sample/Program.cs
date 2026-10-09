@@ -26,6 +26,8 @@ logger.LogInformation("Running with policy = {Policy}",
                       RiskRuleFailurePolicy.FailAll);
 await RunRiskEvaluationFailAllScenarioAsync(logger);
 
+await RunNodeSelectionRaceScenarioAsync(logger, factory);
+await RunNodeSelectionAllFailScenarioAsync(logger, factory);
 return;
 
 
@@ -142,6 +144,85 @@ static async Task RunRiskEvaluationFailAllScenarioAsync(ILogger logger)
         logger.LogInformation("");
         logger.LogInformation("Notice: AML and Velocity continued to run in the background "
                               + "because Task.WhenAll does not cancel its inputs.");
+    }
+
+    logger.LogInformation("");
+}
+
+static async Task RunNodeSelectionRaceScenarioAsync(ILogger logger,
+                                                    ITransactionEngineFactory factory)
+{
+    logger.LogInformation("=== Node Selection: race with winner ===");
+
+    var clock = Stopwatch.StartNew();
+    var nodes = new[]
+    {
+        FakeNode.Failing   (logger, clock, "node-us-east",  latencyMs: 500, reason: "timeout"),
+        FakeNode.Responding(logger, clock, "node-eu-west",  latencyMs: 150, state: "confirmed"),
+        FakeNode.Responding(logger, clock, "node-ap-south", latencyMs: 800, state: "confirmed"),
+        FakeNode.Failing   (logger, clock, "node-standby",  latencyMs: 300, reason: "unreachable"),
+    };
+
+    using var engine = factory.Create();
+
+    var startMs = clock.ElapsedMilliseconds;
+    var status = await engine
+        .GetFastestConfirmationAsync(nodes)
+        .ConfigureAwait(false);
+    var elapsed = clock.ElapsedMilliseconds - startMs;
+
+    logger.LogInformation("");
+    logger.LogInformation("Winner after {Elapsed}ms: transaction={TxId} state={State}",
+                          elapsed,
+                          status.TransactionId,
+                          status.State);
+
+    await Task.Delay(150).ConfigureAwait(false);
+    logger.LogInformation("");
+}
+
+static async Task RunNodeSelectionAllFailScenarioAsync(ILogger logger,
+                                                       ITransactionEngineFactory factory)
+{
+    logger.LogInformation("=== Node Selection: all nodes fail ===");
+
+    var clock = Stopwatch.StartNew();
+    var nodes = new[]
+    {
+        FakeNode.Failing(logger, clock, "node-us-east",  latencyMs: 200, reason: "timeout"),
+        FakeNode.Failing(logger, clock, "node-eu-west",  latencyMs: 100, reason: "connection refused"),
+        FakeNode.Failing(logger, clock, "node-ap-south", latencyMs: 300, reason: "gateway error"),
+    };
+
+    using var engine = factory.Create();
+
+    try
+    {
+        await engine.GetFastestConfirmationAsync(nodes).ConfigureAwait(false);
+        logger.LogInformation("Unexpected: no exception was thrown.");
+    }
+    catch (InvalidOperationException ex)
+    {
+        logger.LogInformation("");
+        logger.LogInformation("Caught expected: {Message}", ex.Message);
+
+        switch (ex.InnerException)
+        {
+            case AggregateException agg:
+                foreach (var inner in agg.InnerExceptions)
+                {
+                    logger.LogInformation("  inner: {Type}: {Message}",
+                                          inner.GetType().Name,
+                                          inner.Message);
+                }
+                break;
+
+            case { } single:
+                logger.LogInformation("  inner: {Type}: {Message}",
+                                      single.GetType().Name,
+                                      single.Message);
+                break;
+        }
     }
 
     logger.LogInformation("");
