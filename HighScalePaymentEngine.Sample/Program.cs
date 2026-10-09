@@ -16,6 +16,7 @@ var logger = host.Services.GetRequiredService<ILogger<Program>>();
 var factory = host.Services.GetRequiredService<ITransactionEngineFactory>();
 
 await RunWatchdogScenarioAsync(logger, factory);
+
 await RunBatchDispatchScenarioAsync(logger, factory);
 
 logger.LogInformation("Running with policy = {Policy}",
@@ -28,6 +29,8 @@ await RunRiskEvaluationFailAllScenarioAsync(logger);
 
 await RunNodeSelectionRaceScenarioAsync(logger, factory);
 await RunNodeSelectionAllFailScenarioAsync(logger, factory);
+
+await RunEncryptionScenarioAsync(logger, factory);
 return;
 
 
@@ -226,6 +229,71 @@ static async Task RunNodeSelectionAllFailScenarioAsync(ILogger logger,
     }
 
     logger.LogInformation("");
+}
+
+static async Task RunEncryptionScenarioAsync(
+    ILogger logger,
+    ITransactionEngineFactory factory)
+{
+    logger.LogInformation("=== Encryption: parallelism and ordering ===");
+
+    var logs = Enumerable.Range(1, 12)
+        .Select(i => new RawAuditLog(i, $"payload-{i:D2}"))
+        .ToArray();
+
+    // سه زیرسناریو با درجه parallelism متفاوت.
+    await RunEncryptionAsync(logger, factory, logs, requested: 1, "serial (1)");
+    await RunEncryptionAsync(logger, factory, logs, requested: 4, "throttled (4)");
+    await RunEncryptionAsync(logger, factory, logs, requested: -1, "auto (-1)");
+
+    logger.LogInformation("");
+}
+
+static async Task RunEncryptionAsync(ILogger logger,
+                                     ITransactionEngineFactory factory,
+                                     RawAuditLog[] logs,
+                                     int requested,
+                                     string label)
+{
+    logger.LogInformation("");
+    logger.LogInformation("--- maxDegreeOfParallelism = {Label} ---", label);
+
+    var encrypt = FakeEncryptor.Create(workMs: 50);
+
+    using var engine = factory.Create();
+
+    var sw = Stopwatch.StartNew();
+    var results = engine.EncryptAuditLogsInParallel(logs,
+                                                    encrypt,
+                                                    maxDegreeOfParallelism: requested);
+    sw.Stop();
+
+    var distinctThreads = results
+        .Select(r => r.ProcessedByThreadId)
+        .Distinct()
+        .OrderBy(id => id)
+        .ToArray();
+
+    logger.LogInformation("  processed {Count} records in {Elapsed}ms across {Threads} thread(s): [{Ids}]",
+                          results.Count,
+                          sw.ElapsedMilliseconds,
+                          distinctThreads.Length,
+                          string.Join(", ", distinctThreads));
+
+    var orderedCorrectly = results
+        .Select((r, i) => r.Id == logs[i].Id)
+        .All(ok => ok);
+
+    logger.LogInformation("  order preserved: {Ordered}",
+                          orderedCorrectly);
+
+    var sample = results[0];
+    logger.LogInformation("  sample: id={Id} encrypted={Encrypted} thread={Thread}",
+                          sample.Id,
+                          sample.EncryptedPayload,
+                          sample.ProcessedByThreadId);
+
+    await Task.Yield();
 }
 #endregion
 
