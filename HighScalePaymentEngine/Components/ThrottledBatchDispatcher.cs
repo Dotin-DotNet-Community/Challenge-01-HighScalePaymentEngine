@@ -1,4 +1,5 @@
-﻿using HighScalePaymentEngine.Abstractions;
+﻿using System.Runtime.ExceptionServices;
+using HighScalePaymentEngine.Abstractions;
 using HighScalePaymentEngine.Models;
 using HighScalePaymentEngine.Options;
 using HighScalePaymentEngine.Options.Policies;
@@ -28,7 +29,6 @@ public sealed class ThrottledBatchDispatcher : IBatchDispatcher
             return Array.Empty<BatchResult>();
 
         var effectiveConcurrency = ResolveConcurrency(maxConcurrentCalls);
-
         var results = new BatchResult[batches.Count];
         var policy = _options.FailurePolicy;
 
@@ -38,29 +38,40 @@ public sealed class ThrottledBatchDispatcher : IBatchDispatcher
             CancellationToken = cancellationToken
         };
 
-        await Parallel.ForEachAsync(Enumerable.Range(0, batches.Count),
-                                    parallelOptions,
-                                    async (index, ct) =>
-            {
-                var batch = batches[index];
+        try
+        {
+            await Parallel.ForEachAsync(
+                Enumerable.Range(0, batches.Count),
+                parallelOptions,
+                async (index, ct) =>
+                {
+                    var batch = batches[index];
 
-                try
-                {
-                    results[index] = await batchGatewayCaller(batch.Requests, ct)
-                        .ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception) when (policy == BatchFailurePolicy.ContinueOnError)
-                {
-                    results[index] = new BatchResult(BatchIndex: batch.Index,
-                                                     TotalItems: batch.TotalItems,
-                                                     TotalAmount: batch.TotalAmount,
-                                                     IsSuccess: false);
-                }
-            }).ConfigureAwait(false);
+                    try
+                    {
+                        results[index] = await batchGatewayCaller(batch.Requests, ct)
+                            .ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception) when (policy == BatchFailurePolicy.ContinueOnError)
+                    {
+                        results[index] = new BatchResult(BatchIndex: batch.Index,
+                                                         TotalItems: batch.TotalItems,
+                                                         TotalAmount: batch.TotalAmount,
+                                                         IsSuccess: false);
+                    }
+                }).ConfigureAwait(false);
+        }
+        catch (AggregateException aggregate)
+            when (aggregate.InnerExceptions.Count == 1)
+        {
+            ExceptionDispatchInfo
+                .Capture(aggregate.InnerExceptions[0])
+                .Throw();
+        }
 
         return results;
     }

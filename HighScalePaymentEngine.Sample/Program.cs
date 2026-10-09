@@ -3,6 +3,7 @@ using HighScalePaymentEngine.DependencyInjection;
 using HighScalePaymentEngine.Factories;
 using HighScalePaymentEngine.Options.Policies;
 using HighScalePaymentEngine.Sample.Fakes;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -31,6 +32,8 @@ await RunNodeSelectionRaceScenarioAsync(logger, factory);
 await RunNodeSelectionAllFailScenarioAsync(logger, factory);
 
 await RunEncryptionScenarioAsync(logger, factory);
+
+await RunConfigComparisonAsync(logger);
 return;
 
 
@@ -231,9 +234,8 @@ static async Task RunNodeSelectionAllFailScenarioAsync(ILogger logger,
     logger.LogInformation("");
 }
 
-static async Task RunEncryptionScenarioAsync(
-    ILogger logger,
-    ITransactionEngineFactory factory)
+static async Task RunEncryptionScenarioAsync(ILogger logger,
+                                             ITransactionEngineFactory factory)
 {
     logger.LogInformation("=== Encryption: parallelism and ordering ===");
 
@@ -241,7 +243,6 @@ static async Task RunEncryptionScenarioAsync(
         .Select(i => new RawAuditLog(i, $"payload-{i:D2}"))
         .ToArray();
 
-    // سه زیرسناریو با درجه parallelism متفاوت.
     await RunEncryptionAsync(logger, factory, logs, requested: 1, "serial (1)");
     await RunEncryptionAsync(logger, factory, logs, requested: 4, "throttled (4)");
     await RunEncryptionAsync(logger, factory, logs, requested: -1, "auto (-1)");
@@ -295,6 +296,24 @@ static async Task RunEncryptionAsync(ILogger logger,
 
     await Task.Yield();
 }
+
+static async Task RunConfigComparisonAsync(ILogger logger)
+{
+    logger.LogInformation("=== Config Comparison: same code, two configs ===");
+
+    var relaxed = BuildConfig("appsettings.json");
+    var strict = BuildConfig("appsettings.strict.json");
+
+    logger.LogInformation("");
+    logger.LogInformation("### RELAXED (ContinueOnError + Ignore)");
+    await RunConfigWorkloadAsync(logger, relaxed).ConfigureAwait(false);
+
+    logger.LogInformation("");
+    logger.LogInformation("### STRICT (FailFast + FailAll)");
+    await RunConfigWorkloadAsync(logger, strict).ConfigureAwait(false);
+
+    logger.LogInformation("");
+}
 #endregion
 
 
@@ -318,5 +337,97 @@ static ServiceProvider BuildIsolatedProvider(RiskRuleFailurePolicy policy)
     });
     services.AddTransactionEngine(o => o.RiskEvaluation.FailurePolicy = policy);
     return services.BuildServiceProvider();
+}
+
+static IConfiguration BuildConfig(string fileName)
+{
+    return new ConfigurationBuilder()
+        .SetBasePath(AppContext.BaseDirectory)
+        .AddJsonFile(fileName, optional: false)
+        .Build();
+}
+
+static async Task RunConfigWorkloadAsync(ILogger logger,
+                                         IConfiguration configuration)
+{
+    var services = new ServiceCollection();
+    services.AddLogging(b =>
+    {
+        b.AddSimpleConsole();
+        b.SetMinimumLevel(LogLevel.Information);
+    });
+    services.AddTransactionEngine(configuration);
+
+    await using var provider = services.BuildServiceProvider();
+    var factory = provider.GetRequiredService<ITransactionEngineFactory>();
+
+    logger.LogInformation("-- workload: risk evaluation with one failing rule --");
+
+    var clock = Stopwatch.StartNew();
+    var rules = new[]
+    {
+        FakeRiskRule.Approved(logger, clock, "AML",       latencyMs: 100, riskScore: 10),
+        FakeRiskRule.Throwing(logger, clock, "Sanctions", latencyMs: 150, reason: "sanctions outage"),
+        FakeRiskRule.Approved(logger, clock, "Velocity",  latencyMs: 120, riskScore: 20),
+    };
+
+    using (var engine = factory.Create())
+    {
+        try
+        {
+            var results = await engine
+                .EvaluateRiskRulesAsync(rules)
+                .ConfigureAwait(false);
+
+            logger.LogInformation("  => returned {Count} of {Total} rules",
+                                  results.Length,
+                                  rules.Length);
+        }
+        catch (InvalidOperationException ex)
+        {
+            logger.LogInformation("  => threw InvalidOperationException: {Message}",
+                                  ex.Message);
+        }
+    }
+
+    logger.LogInformation("-- workload: batch dispatch with one failing batch --");
+
+    var requests = new[]
+    {
+        new TransactionRequest("T-01", 9m),
+        new TransactionRequest("T-02", 8m),
+        new TransactionRequest("T-03", 7m),
+        new TransactionRequest("T-04", 3m),
+        new TransactionRequest("T-05", 3m),
+    };
+
+    var gateway = new FailingBatchGateway(logger, triggerAmount: 10m);
+
+    using (var engine = factory.Create())
+    {
+        try
+        {
+            var results = await engine
+                .BatchAndDispatchWithThrottleAsync(requests,
+                                                   maxBatchAmount: 10m,
+                                                   batchGatewayCaller: gateway.CallAsync,
+                                                   maxConcurrentGatewayCalls: 2)
+                .ConfigureAwait(false);
+
+            logger.LogInformation("  => returned {Count} batch results:", results.Count);
+            foreach (var r in results)
+            {
+                logger.LogInformation("     batch #{Index} amount={Amount} success={Success}",
+                                      r.BatchIndex,
+                                      r.TotalAmount,
+                                      r.IsSuccess);
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            logger.LogInformation("  => threw InvalidOperationException: {Message}",
+                                  ex.Message);
+        }
+    }
 }
 #endregion
