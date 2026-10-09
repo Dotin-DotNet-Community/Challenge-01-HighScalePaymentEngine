@@ -8,13 +8,13 @@ namespace HighScalePaymentEngine.Sample.Fakes;
 /// </summary>
 public sealed class FakeBatchGateway
 {
-    private readonly ILogger<FakeBatchGateway> _logger;
+    private readonly ILogger _logger;
     private readonly Stopwatch _clock;
     private readonly TimeSpan _latency;
     private int _inFlight;
     private int _peakConcurrency;
 
-    public FakeBatchGateway(ILogger<FakeBatchGateway> logger,
+    public FakeBatchGateway(ILogger logger,
                             Stopwatch clock,
                             TimeSpan latency)
     {
