@@ -1,3 +1,4 @@
 <Solution>
+  <Project Path="HighScalePaymentEngine.Sample/HighScalePaymentEngine.Sample.csproj" Id="21f5b5e6-eb46-4492-942f-5e17c1382f1f" />
   <Project Path="HighScalePaymentEngine/HighScalePaymentEngine.csproj" />
 </Solution>
